@@ -41,6 +41,9 @@ const (
 func entrypointMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		keep := req.URL.Path
+		keepRaw := req.URL.RawPath
+		keepURI := req.RequestURI
+
 		purell.NormalizeURL(req.URL, normalizeFlags)
 
 		// ensure we have a slash in the url
@@ -62,8 +65,8 @@ func entrypointMiddleware(next http.Handler) http.Handler {
 
 		// place back the original uri for proxying request
 		req.URL.Path = keep
-		req.URL.RawPath = keep
-		req.RequestURI = keep
+		req.URL.RawPath = keepRaw
+		req.RequestURI = keepURI
 	})
 }
 
