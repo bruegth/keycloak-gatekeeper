@@ -26,6 +26,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"runtime"
@@ -38,7 +39,6 @@ import (
 
 	proxyproto "github.com/armon/go-proxyproto"
 	"github.com/coreos/go-oidc/oidc"
-	"github.com/elazarl/goproxy"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/prometheus/client_golang/prometheus"
@@ -288,66 +288,67 @@ func (r *oauthProxy) createReverseProxy() error {
 
 // createForwardingProxy creates a forwarding proxy
 func (r *oauthProxy) createForwardingProxy() error {
-	r.log.Info("enabling forward signing mode, listening on", zap.String("interface", r.config.Listen))
+	/*
+		r.log.Info("enabling forward signing mode, listening on", zap.String("interface", r.config.Listen))
 
-	if r.config.SkipUpstreamTLSVerify {
-		r.log.Warn("tls verification switched off. In forward signing mode it's recommended you verify! (--skip-upstream-tls-verify=false)")
-	}
-	if err := r.createUpstreamProxy(nil); err != nil {
-		return err
-	}
-	//nolint:bodyclose
-	forwardingHandler := r.forwardProxyHandler()
+		if r.config.SkipUpstreamTLSVerify {
+			r.log.Warn("tls verification switched off. In forward signing mode it's recommended you verify! (--skip-upstream-tls-verify=false)")
+		}
+		if err := r.createUpstreamProxy(nil); err != nil {
+			return err
+		}
+		//nolint:bodyclose
+		forwardingHandler := r.forwardProxyHandler()
 
-	// set the http handler
-	proxy := r.upstream.(*goproxy.ProxyHttpServer)
-	r.router = proxy
+		// set the http handler
+		proxy := r.upstream.(*goproxy.ProxyHttpServer)
+		r.router = proxy
 
-	// setup the tls configuration
-	if r.config.TLSCaCertificate != "" && r.config.TLSCaPrivateKey != "" {
-		ca, err := loadCA(r.config.TLSCaCertificate, r.config.TLSCaPrivateKey)
-		if err != nil {
-			return fmt.Errorf("unable to load certificate authority, error: %s", err)
+		// setup the tls configuration
+		if r.config.TLSCaCertificate != "" && r.config.TLSCaPrivateKey != "" {
+			ca, err := loadCA(r.config.TLSCaCertificate, r.config.TLSCaPrivateKey)
+			if err != nil {
+				return fmt.Errorf("unable to load certificate authority, error: %s", err)
+			}
+
+			// implement the goproxy connect method
+			proxy.OnRequest().HandleConnectFunc(
+				func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+					return &goproxy.ConnectAction{
+						Action:    goproxy.ConnectMitm,
+						TLSConfig: goproxy.TLSConfigFromCA(ca),
+					}, host
+				},
+			)
+		} else {
+			// use the default certificate provided by goproxy
+			proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 		}
 
-		// implement the goproxy connect method
-		proxy.OnRequest().HandleConnectFunc(
-			func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-				return &goproxy.ConnectAction{
-					Action:    goproxy.ConnectMitm,
-					TLSConfig: goproxy.TLSConfigFromCA(ca),
-				}, host
-			},
-		)
-	} else {
-		// use the default certificate provided by goproxy
-		proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
-	}
+		proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+			// @NOTES, somewhat annoying but goproxy hands back a nil response on proxy client errors
+			if resp != nil && r.config.EnableLogging {
+				start := ctx.UserData.(time.Time)
+				latency := time.Since(start)
+				latencyMetric.Observe(latency.Seconds())
+				r.log.Info("client request",
+					zap.String("method", resp.Request.Method),
+					zap.String("path", resp.Request.URL.Path),
+					zap.Int("status", resp.StatusCode),
+					zap.Int64("bytes", resp.ContentLength),
+					zap.String("host", resp.Request.Host),
+					zap.String("path", resp.Request.URL.Path),
+					zap.String("latency", latency.String()))
+			}
 
-	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		// @NOTES, somewhat annoying but goproxy hands back a nil response on proxy client errors
-		if resp != nil && r.config.EnableLogging {
-			start := ctx.UserData.(time.Time)
-			latency := time.Since(start)
-			latencyMetric.Observe(latency.Seconds())
-			r.log.Info("client request",
-				zap.String("method", resp.Request.Method),
-				zap.String("path", resp.Request.URL.Path),
-				zap.Int("status", resp.StatusCode),
-				zap.Int64("bytes", resp.ContentLength),
-				zap.String("host", resp.Request.Host),
-				zap.String("path", resp.Request.URL.Path),
-				zap.String("latency", latency.String()))
-		}
-
-		return resp
-	})
-	proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		ctx.UserData = time.Now()
-		forwardingHandler(req, ctx.Resp)
-		return req, ctx.Resp
-	})
-
+			return resp
+		})
+		proxy.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+			ctx.UserData = time.Now()
+			forwardingHandler(req, ctx.Resp)
+			return req, ctx.Resp
+		})
+	*/
 	return nil
 }
 
@@ -555,78 +556,31 @@ func (r *oauthProxy) createHTTPListener(config listenerConfig) (net.Listener, er
 
 // createUpstreamProxy create a reverse http proxy from the upstream
 func (r *oauthProxy) createUpstreamProxy(upstream *url.URL) error {
-	dialer := (&net.Dialer{
-		KeepAlive: r.config.UpstreamKeepaliveTimeout,
-		Timeout:   r.config.UpstreamTimeout,
-	}).Dial
-
-	// are we using a unix socket?
-	if upstream != nil && upstream.Scheme == "unix" {
-		r.log.Info("using unix socket for upstream", zap.String("socket", fmt.Sprintf("%s%s", upstream.Host, upstream.Path)))
-
-		socketPath := fmt.Sprintf("%s%s", upstream.Host, upstream.Path)
-		dialer = func(network, address string) (net.Conn, error) {
-			return net.Dial("unix", socketPath)
-		}
-		upstream.Path = ""
-		upstream.Host = "domain-sock"
-		upstream.Scheme = unsecureScheme
-	}
-	// create the upstream tls configure
-	//nolint:gas
-	tlsConfig := &tls.Config{InsecureSkipVerify: r.config.SkipUpstreamTLSVerify}
-
-	// are we using a client certificate
-	// @TODO provide a means of reload on the client certificate when it expires. I'm not sure if it's just a
-	// case of update the http transport settings - Also we to place this go-routine?
-	if r.config.TLSClientCertificate != "" {
-		cert, err := ioutil.ReadFile(r.config.TLSClientCertificate)
-		if err != nil {
-			r.log.Error("unable to read client certificate", zap.String("path", r.config.TLSClientCertificate), zap.Error(err))
-			return err
-		}
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM(cert)
-		tlsConfig.ClientCAs = pool
-		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-	}
-
-	{
-		// @check if we have a upstream ca to verify the upstream
-		if r.config.UpstreamCA != "" {
-			r.log.Info("loading the upstream ca", zap.String("path", r.config.UpstreamCA))
-			ca, err := ioutil.ReadFile(r.config.UpstreamCA)
-			if err != nil {
-				return err
-			}
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(ca)
-			tlsConfig.RootCAs = pool
-		}
-	}
 
 	// create the forwarding proxy
-	proxy := goproxy.NewProxyHttpServer()
-
-	// headers formed by middleware before proxying to upstream shall be
-	// kept in response. This is true for CORS headers ([KEYCOAK-9045])
-	// and for refreshed cookies (htts://github.com/keycloak/keycloak-gatekeeper/pulls/456])
-	proxy.KeepDestinationHeaders = true
-	proxy.Logger = httplog.New(ioutil.Discard, "", 0)
+	proxy := httputil.NewSingleHostReverseProxy(upstream)
 	r.upstream = proxy
 
-	// update the tls configuration of the reverse proxy
-	r.upstream.(*goproxy.ProxyHttpServer).Tr = &http.Transport{
-		Dial:                  dialer,
-		DisableKeepAlives:     !r.config.UpstreamKeepalives,
-		ExpectContinueTimeout: r.config.UpstreamExpectContinueTimeout,
-		ResponseHeaderTimeout: r.config.UpstreamResponseHeaderTimeout,
-		TLSClientConfig:       tlsConfig,
-		TLSHandshakeTimeout:   r.config.UpstreamTLSHandshakeTimeout,
-		MaxIdleConns:          r.config.MaxIdleConns,
-		MaxIdleConnsPerHost:   r.config.MaxIdleConnsPerHost,
-	}
+	/*
+		// headers formed by middleware before proxying to upstream shall be
+		// kept in response. This is true for CORS headers ([KEYCOAK-9045])
+		// and for refreshed cookies (htts://github.com/keycloak/keycloak-gatekeeper/pulls/456])
+		proxy.KeepDestinationHeaders = true
+		proxy.Logger = httplog.New(ioutil.Discard, "", 0)
+		r.upstream = proxy
 
+		// update the tls configuration of the reverse proxy
+		r.upstream.(*goproxy.ProxyHttpServer).Tr = &http.Transport{
+			Dial:                  dialer,
+			DisableKeepAlives:     !r.config.UpstreamKeepalives,
+			ExpectContinueTimeout: r.config.UpstreamExpectContinueTimeout,
+			ResponseHeaderTimeout: r.config.UpstreamResponseHeaderTimeout,
+			TLSClientConfig:       tlsConfig,
+			TLSHandshakeTimeout:   r.config.UpstreamTLSHandshakeTimeout,
+			MaxIdleConns:          r.config.MaxIdleConns,
+			MaxIdleConnsPerHost:   r.config.MaxIdleConnsPerHost,
+		}
+	*/
 	return nil
 }
 

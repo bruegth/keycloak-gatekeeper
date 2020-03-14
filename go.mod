@@ -1,5 +1,7 @@
 module github.com/keycloak/keycloak-gatekeeper
 
+go 1.14
+
 require (
 	github.com/PuerkitoBio/purell v1.1.0
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
@@ -8,7 +10,6 @@ require (
 	github.com/coreos/go-oidc v0.0.0-20171020180921-e860bd55bfa7
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/elazarl/goproxy v0.0.0-20181111060418-2ce16c963a8a
 	github.com/etcd-io/bbolt v1.3.3
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/garyburd/redigo v1.6.0 // indirect
