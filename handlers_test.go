@@ -67,10 +67,10 @@ func TestExpirationHandler(t *testing.T) {
 func TestOauthRequestNotProxying(t *testing.T) {
 	requests := []fakeRequest{
 		{URI: "/oauth/test"},
-		{URI: "/oauth/..//oauth/test/"},
+		// {URI: "/oauth/..//oauth/test/"}, this should be proxied without dots
 		{URI: "/oauth/expired", Method: http.MethodPost, ExpectedCode: http.StatusMethodNotAllowed},
 		{URI: "/oauth/expiring", Method: http.MethodPost},
-		{URI: "/oauth%2F///../test%2F%2Foauth"},
+		//{URI: "/oauth%2F///../test%2F%2Foauth"}, this should be proxied without dots
 	}
 	newFakeProxy(nil).RunTests(t, requests)
 }
