@@ -34,21 +34,21 @@ import (
 
 const (
 	// normalizeFlags is the options to purell
-	normalizeFlags purell.NormalizationFlags = purell.FlagRemoveDotSegments | purell.FlagRemoveDuplicateSlashes
+	normalizeFlags purell.NormalizationFlags = purell.FlagsSafe | purell.FlagRemoveDotSegments
 )
 
 // entrypointMiddleware is custom filtering for incoming requests
 func entrypointMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		keep := req.URL.Path
+
+		// @note: purell only normalizes req.URL.Path
 		purell.NormalizeURL(req.URL, normalizeFlags)
 
 		// ensure we have a slash in the url
 		if !strings.HasPrefix(req.URL.Path, "/") {
 			req.URL.Path = "/" + req.URL.Path
 		}
-		req.RequestURI = req.URL.RawPath
-		req.URL.RawPath = req.URL.Path
 
 		// @step: create a context for the request
 		scope := &RequestScope{}
@@ -60,10 +60,11 @@ func entrypointMiddleware(next http.Handler) http.Handler {
 		latencyMetric.Observe(time.Since(start).Seconds())
 		statusMetric.WithLabelValues(fmt.Sprintf("%d", resp.Status()), req.Method).Inc()
 
-		// place back the original uri for proxying request
-		req.URL.Path = keep
-		req.URL.RawPath = keep
-		req.RequestURI = keep
+		if req.URL.RawPath != "" {
+			req.URL.Path = req.URL.RawPath
+		} else {
+			req.URL.Path = keep
+		}
 	})
 }
 
