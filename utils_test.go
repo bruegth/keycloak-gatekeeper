@@ -444,12 +444,12 @@ func TestGetWithin(t *testing.T) {
 		Expected time.Duration
 	}{
 		{
-			Expires:  time.Now().Add(time.Duration(1) * time.Hour),
+			Expires:  time.Now().UTC().Add(time.Duration(1) * time.Hour),
 			Percent:  0.10,
 			Expected: 359000000000,
 		},
 		{
-			Expires:  time.Now().Add(time.Duration(1) * time.Hour),
+			Expires:  time.Now().UTC().Add(time.Duration(1) * time.Hour),
 			Percent:  0.20,
 			Expected: 719000000000,
 		},
